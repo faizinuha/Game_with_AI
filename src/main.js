@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
-import GameScene from './scenes/GameScene.js';
+import PreloadScene from './scenes/PreloadScene.js';
 import MenuScene from './scenes/MenuScene.js';
+import GameScene from './scenes/GameScene.js';
 import PuzzleScene from './scenes/PuzzleScene.js';
 
 const config = {
@@ -16,7 +17,7 @@ const config = {
       debug: false
     }
   },
-  scene: [MenuScene, GameScene, PuzzleScene]
+  scene: [PreloadScene, MenuScene, GameScene, PuzzleScene]
 };
 
 window.addEventListener('load', () => {

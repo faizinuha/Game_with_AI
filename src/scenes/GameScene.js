@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { puzzles } from '../data/puzzles.js';
+import { AudioGenerator } from '../utils/AudioGenerator.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -15,8 +16,11 @@ export default class GameScene extends Phaser.Scene {
     this.collectedItems = new Set();
     this.dialogBox = null;
     this.isShowingDialog = false;
-    this.ambientSound = null;
     this.lightRadius = 150;
+    this.currentDirection = 'down';
+    this.decorations = [];
+    this.ambientInterval = null;
+    this.lastFootstepTime = 0;
   }
 
   create() {
@@ -26,16 +30,20 @@ export default class GameScene extends Phaser.Scene {
     this.createPlayer();
     this.createDoors();
     this.createItems();
+    this.createDecorations();
     this.createLighting();
     this.setupControls();
     this.createUI();
 
     this.cameras.main.fadeIn(2000, 0, 0, 0);
 
-    this.showDialog('You wake up in a dark asylum...\nFind a way to escape.\nPress E to interact with objects.', 4000);
+    const ambientSound = AudioGenerator.createAmbientSound(this);
+    this.ambientInterval = ambientSound.play();
+
+    this.showDialog('You wake up in a dark asylum...\nFind a way to escape.\nUse WASD or Arrow Keys to move\nPress E to interact with objects.', 5000);
 
     this.time.addEvent({
-      delay: 15000,
+      delay: 20000,
       callback: () => {
         this.showScaryEffect();
       },
@@ -45,59 +53,95 @@ export default class GameScene extends Phaser.Scene {
 
   createRooms() {
     const { width, height } = this.cameras.main;
+    const tileSize = 32;
 
     const roomConfigs = [
-      { color: 0x1a1a1a, name: 'Entrance Hall' },
-      { color: 0x0d1b2a, name: 'Morgue' },
-      { color: 0x1b1a0d, name: 'Operating Room' },
-      { color: 0x1a0d0d, name: 'Chapel' }
+      { color: 0x1a1a1a, name: 'Entrance Hall', walls: 0x2a2a2a },
+      { color: 0x0d1b2a, name: 'Morgue', walls: 0x1a2a3a },
+      { color: 0x1b1a0d, name: 'Operating Room', walls: 0x2a2a1a },
+      { color: 0x1a0d0d, name: 'Chapel', walls: 0x2a1a1a }
     ];
 
     roomConfigs.forEach((config, index) => {
-      const room = this.add.rectangle(width / 2, height / 2, width - 100, height - 100, config.color);
-      room.setStrokeStyle(2, 0x444444);
-      room.visible = index === 0;
-      this.rooms.push({ graphics: room, name: config.name });
+      const roomContainer = this.add.container(0, 0);
+
+      for (let x = 50; x < width - 50; x += tileSize) {
+        for (let y = 50; y < height - 50; y += tileSize) {
+          const floor = this.add.image(x, y, 'floor');
+          floor.setTint(config.color);
+          roomContainer.add(floor);
+        }
+      }
+
+      for (let x = 50; x < width - 50; x += tileSize) {
+        const wallTop = this.add.image(x, 50, 'wall');
+        wallTop.setTint(config.walls);
+        roomContainer.add(wallTop);
+
+        const wallBottom = this.add.image(x, height - 50, 'wall');
+        wallBottom.setTint(config.walls);
+        roomContainer.add(wallBottom);
+      }
+
+      for (let y = 50; y < height - 50; y += tileSize) {
+        const wallLeft = this.add.image(50, y, 'wall');
+        wallLeft.setTint(config.walls);
+        roomContainer.add(wallLeft);
+
+        const wallRight = this.add.image(width - 50, y, 'wall');
+        wallRight.setTint(config.walls);
+        roomContainer.add(wallRight);
+      }
+
+      roomContainer.visible = index === 0;
+      this.rooms.push({ graphics: roomContainer, name: config.name });
     });
 
     this.roomNameText = this.add.text(width / 2, 40, this.rooms[0].name, {
-      fontSize: '24px',
-      color: '#666666',
-      fontFamily: 'Georgia, serif'
+      fontSize: '28px',
+      color: '#8b0000',
+      fontFamily: 'Georgia, serif',
+      stroke: '#000',
+      strokeThickness: 4
     }).setOrigin(0.5).setDepth(100);
   }
 
   createPlayer() {
     const { width, height } = this.cameras.main;
 
-    this.player = this.add.circle(width / 2, height / 2, 15, 0xffffff);
+    this.player = this.add.sprite(width / 2, height / 2, 'player_down_0');
+    this.player.setScale(1.5);
     this.physics.add.existing(this.player);
     this.player.body.setCollideWorldBounds(true);
+    this.player.body.setSize(20, 20);
+    this.player.setDepth(10);
   }
 
   createDoors() {
     const { width, height } = this.cameras.main;
 
     const doorPositions = [
-      { x: width - 100, y: height / 2, next: 1, puzzle: 0 },
-      { x: width - 100, y: height / 2, next: 2, puzzle: 1 },
-      { x: width - 100, y: height / 2, next: 3, puzzle: 2 }
+      { x: width - 130, y: height / 2, next: 1, puzzle: 0 },
+      { x: width - 130, y: height / 2, next: 2, puzzle: 1 },
+      { x: width - 130, y: height / 2, next: 3, puzzle: 2 }
     ];
 
     doorPositions.forEach((pos, index) => {
-      const door = this.add.rectangle(pos.x, pos.y, 60, 120, 0x4a4a4a);
-      door.setStrokeStyle(3, 0x8b4513);
+      const door = this.add.image(pos.x, pos.y, 'door');
+      door.setScale(1.2);
       door.visible = index === this.currentRoom;
+      door.setDepth(5);
       this.physics.add.existing(door, true);
+      door.body.setSize(50, 80);
 
-      const doorText = this.add.text(pos.x, pos.y, '🚪', {
-        fontSize: '48px'
-      }).setOrigin(0.5);
-      doorText.visible = index === this.currentRoom;
+      const lockIcon = this.add.text(pos.x, pos.y, '🔒', {
+        fontSize: '32px'
+      }).setOrigin(0.5).setDepth(6);
+      lockIcon.visible = index === this.currentRoom;
 
       this.doors.push({
         graphics: door,
-        text: doorText,
+        lockIcon: lockIcon,
         next: pos.next,
         puzzle: pos.puzzle,
         index: index
@@ -109,21 +153,69 @@ export default class GameScene extends Phaser.Scene {
     const { width, height } = this.cameras.main;
 
     this.items = [
-      { x: 200, y: 300, type: 'note', emoji: '📄', room: 0, message: 'Note: "The password is hidden in the shadows..."' },
-      { x: 800, y: 400, type: 'key', emoji: '🔑', room: 1, message: 'You found a rusty key!' },
-      { x: 300, y: 500, type: 'skull', emoji: '💀', room: 1, message: 'A human skull... this place is cursed.' },
-      { x: 600, y: 250, type: 'candle', emoji: '🕯️', room: 2, message: 'A flickering candle provides little comfort.' },
-      { x: 400, y: 400, type: 'bible', emoji: '📖', room: 3, message: 'An old bible with a riddle inside...' }
+      { x: 200, y: 300, type: 'note', room: 0, message: 'Note: "The password is hidden in the shadows..."' },
+      { x: 800, y: 400, type: 'key', room: 1, message: 'You found a rusty key!' },
+      { x: 300, y: 500, type: 'skull', room: 1, message: 'A human skull... this place is cursed.' },
+      { x: 600, y: 250, type: 'candle', room: 2, message: 'A flickering candle provides little comfort.' },
+      { x: 400, y: 400, type: 'bible', room: 3, message: 'An old bible with a riddle inside...' }
     ];
 
     this.itemGraphics = this.items.map(item => {
-      const text = this.add.text(item.x, item.y, item.emoji, {
-        fontSize: '32px'
-      }).setOrigin(0.5);
-      text.visible = item.room === this.currentRoom;
-      this.physics.add.existing(text);
-      text.body.setSize(32, 32);
-      return { ...item, graphics: text };
+      const sprite = this.add.image(item.x, item.y, item.type);
+      sprite.setScale(1.5);
+      sprite.visible = item.room === this.currentRoom;
+      sprite.setDepth(5);
+      this.physics.add.existing(sprite);
+      sprite.body.setSize(24, 24);
+
+      this.tweens.add({
+        targets: sprite,
+        y: sprite.y - 10,
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      return { ...item, graphics: sprite };
+    });
+  }
+
+  createDecorations() {
+    const { width, height } = this.cameras.main;
+
+    const decorationConfigs = [
+      [
+        { x: 150, y: 150, type: 'window' },
+        { x: 150, y: height - 150, type: 'window' },
+        { x: 400, y: 200, type: 'table' }
+      ],
+      [
+        { x: 300, y: 150, type: 'table' },
+        { x: 600, y: 200, type: 'blood' },
+        { x: 450, y: height - 150, type: 'blood' }
+      ],
+      [
+        { x: 200, y: 350, type: 'table' },
+        { x: 700, y: 300, type: 'blood' }
+      ],
+      [
+        { x: 300, y: 200, type: 'painting' },
+        { x: 500, y: height / 2, type: 'table' }
+      ]
+    ];
+
+    decorationConfigs.forEach((roomDeco, roomIndex) => {
+      const roomDecorations = [];
+      roomDeco.forEach(deco => {
+        const sprite = this.add.image(deco.x, deco.y, deco.type);
+        sprite.setScale(1);
+        sprite.visible = roomIndex === this.currentRoom;
+        sprite.setDepth(1);
+        sprite.setAlpha(0.7);
+        roomDecorations.push(sprite);
+      });
+      this.decorations.push(roomDecorations);
     });
   }
 
@@ -137,24 +229,31 @@ export default class GameScene extends Phaser.Scene {
 
     this.lightMask = this.add.graphics();
     this.lightMask.setDepth(51);
+
+    this.lights.enable();
+    this.lights.setAmbientColor(0x404040);
+
+    const light = this.lights.addLight(this.player.x, this.player.y, this.lightRadius, 0xff9933, 2);
+    this.playerLight = light;
   }
 
   createUI() {
     const { width, height } = this.cameras.main;
 
-    this.inventoryText = this.add.text(20, 20, 'Items: 0', {
-      fontSize: '18px',
+    this.inventoryText = this.add.text(20, 20, 'Items: 0 / 5', {
+      fontSize: '20px',
       color: '#ffffff',
       backgroundColor: '#000000',
-      padding: { x: 10, y: 5 }
+      padding: { x: 12, y: 8 },
+      fontFamily: 'Courier New, monospace'
     }).setDepth(100);
 
-    this.hintText = this.add.text(width / 2, height - 30, '', {
-      fontSize: '16px',
+    this.hintText = this.add.text(width / 2, height - 40, '', {
+      fontSize: '18px',
       color: '#ffff00',
       fontFamily: 'Courier New, monospace',
       backgroundColor: '#000000',
-      padding: { x: 10, y: 5 }
+      padding: { x: 12, y: 8 }
     }).setOrigin(0.5).setDepth(100);
   }
 
@@ -175,16 +274,42 @@ export default class GameScene extends Phaser.Scene {
     const speed = 200;
     this.player.body.setVelocity(0);
 
+    let moving = false;
+    let newDirection = this.currentDirection;
+
     if (this.cursors.left.isDown || this.wasd.left.isDown) {
       this.player.body.setVelocityX(-speed);
+      newDirection = 'left';
+      moving = true;
     } else if (this.cursors.right.isDown || this.wasd.right.isDown) {
       this.player.body.setVelocityX(speed);
+      newDirection = 'right';
+      moving = true;
     }
 
     if (this.cursors.up.isDown || this.wasd.up.isDown) {
       this.player.body.setVelocityY(-speed);
+      newDirection = 'up';
+      moving = true;
     } else if (this.cursors.down.isDown || this.wasd.down.isDown) {
-      this.player.body.setVelocityY(speed);
+      this.player.body.setVelocityY(-speed);
+      newDirection = 'down';
+      moving = true;
+    }
+
+    if (moving) {
+      if (this.currentDirection !== newDirection) {
+        this.currentDirection = newDirection;
+      }
+      this.player.anims.play(`walk_${this.currentDirection}`, true);
+
+      const currentTime = this.time.now;
+      if (currentTime - this.lastFootstepTime > 400) {
+        AudioGenerator.playFootstepSound();
+        this.lastFootstepTime = currentTime;
+      }
+    } else {
+      this.player.anims.play(`idle_${this.currentDirection}`, true);
     }
 
     this.updateLighting();
@@ -202,6 +327,10 @@ export default class GameScene extends Phaser.Scene {
 
     this.lightMask.fillCircle(this.player.x, this.player.y, this.lightRadius);
     this.lightMask.blendMode = Phaser.BlendModes.ERASE;
+
+    if (this.playerLight) {
+      this.playerLight.setPosition(this.player.x, this.player.y);
+    }
   }
 
   checkInteractions() {
@@ -215,14 +344,14 @@ export default class GameScene extends Phaser.Scene {
         door.graphics.x, door.graphics.y
       );
 
-      if (distance < 80) {
+      if (distance < 100) {
         if (this.unlockedDoors.has(door.index)) {
-          this.hintText.setText('Press E to enter');
+          this.hintText.setText('Press E to enter next room');
           if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
             this.enterNextRoom(door.next);
           }
         } else {
-          this.hintText.setText('Press E to unlock door (needs puzzle)');
+          this.hintText.setText('Press E to solve puzzle and unlock door');
           if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
             this.startPuzzle(door.puzzle, door.index);
           }
@@ -238,8 +367,8 @@ export default class GameScene extends Phaser.Scene {
         item.graphics.x, item.graphics.y
       );
 
-      if (distance < 60) {
-        this.hintText.setText('Press E to examine');
+      if (distance < 70) {
+        this.hintText.setText('Press E to examine item');
         if (Phaser.Input.Keyboard.JustDown(this.interactKey)) {
           this.collectItem(index);
         }
@@ -250,18 +379,32 @@ export default class GameScene extends Phaser.Scene {
   collectItem(index) {
     const item = this.itemGraphics[index];
     this.collectedItems.add(index);
-    item.graphics.destroy();
+
+    AudioGenerator.playPickupSound();
+
+    this.tweens.add({
+      targets: item.graphics,
+      scale: 0,
+      alpha: 0,
+      duration: 500,
+      ease: 'Back.easeIn',
+      onComplete: () => {
+        item.graphics.destroy();
+      }
+    });
 
     this.tweens.add({
       targets: this.inventoryText,
-      scaleX: 1.2,
-      scaleY: 1.2,
+      scaleX: 1.3,
+      scaleY: 1.3,
       duration: 200,
       yoyo: true
     });
 
-    this.inventoryText.setText(`Items: ${this.collectedItems.size}`);
+    this.inventoryText.setText(`Items: ${this.collectedItems.size} / 5`);
     this.showDialog(item.message, 3000);
+
+    this.cameras.main.flash(300, 255, 215, 0);
   }
 
   startPuzzle(puzzleIndex, doorIndex) {
@@ -270,23 +413,28 @@ export default class GameScene extends Phaser.Scene {
       puzzle: puzzles[puzzleIndex],
       onComplete: () => {
         this.unlockedDoors.add(doorIndex);
-        this.showDialog('Door unlocked!', 2000);
+        this.doors[doorIndex].lockIcon.setText('🔓');
+        AudioGenerator.playUnlockSound();
+        this.cameras.main.flash(500, 0, 255, 0);
+        this.showDialog('Door unlocked! You may proceed.', 2500);
         this.scene.resume();
       },
       onFail: () => {
-        this.showDialog('Wrong answer... try again.', 2000);
+        this.cameras.main.shake(500, 0.01);
+        this.showDialog('Wrong answer... The door remains locked.', 2500);
         this.scene.resume();
       }
     });
   }
 
   enterNextRoom(roomIndex) {
-    this.cameras.main.fadeOut(1000, 0, 0, 0);
+    AudioGenerator.playDoorSound();
+    this.cameras.main.fadeOut(1500, 0, 0, 0);
 
-    this.time.delayedCall(1000, () => {
+    this.time.delayedCall(1500, () => {
       this.rooms[this.currentRoom].graphics.visible = false;
       this.doors[this.currentRoom].graphics.visible = false;
-      this.doors[this.currentRoom].text.visible = false;
+      this.doors[this.currentRoom].lockIcon.visible = false;
 
       this.itemGraphics.forEach(item => {
         if (item.room === this.currentRoom) {
@@ -294,12 +442,16 @@ export default class GameScene extends Phaser.Scene {
         }
       });
 
+      this.decorations[this.currentRoom].forEach(deco => {
+        deco.visible = false;
+      });
+
       this.currentRoom = roomIndex;
       this.rooms[this.currentRoom].graphics.visible = true;
 
       if (this.currentRoom < this.doors.length) {
         this.doors[this.currentRoom].graphics.visible = true;
-        this.doors[this.currentRoom].text.visible = true;
+        this.doors[this.currentRoom].lockIcon.visible = true;
       }
 
       this.itemGraphics.forEach(item => {
@@ -308,21 +460,25 @@ export default class GameScene extends Phaser.Scene {
         }
       });
 
+      this.decorations[this.currentRoom].forEach(deco => {
+        deco.visible = true;
+      });
+
       this.roomNameText.setText(this.rooms[this.currentRoom].name);
 
       const { width, height } = this.cameras.main;
       this.player.setPosition(150, height / 2);
 
       if (roomIndex === 3) {
-        this.showDialog('You found the exit! You escaped the asylum!', 5000);
-        this.time.delayedCall(6000, () => {
+        this.cameras.main.fadeIn(1500, 0, 0, 0);
+        this.showDialog('YOU ESCAPED THE ASYLUM!\n\nYou found the exit and survived the horror.', 6000);
+        this.time.delayedCall(7000, () => {
           this.scene.start('MenuScene');
         });
       } else {
-        this.showDialog(`Entered: ${this.rooms[this.currentRoom].name}`, 2000);
+        this.showDialog(`Entered: ${this.rooms[this.currentRoom].name}\nBe careful... something feels wrong here.`, 3000);
+        this.cameras.main.fadeIn(1500, 0, 0, 0);
       }
-
-      this.cameras.main.fadeIn(1000, 0, 0, 0);
     });
   }
 
@@ -335,8 +491,8 @@ export default class GameScene extends Phaser.Scene {
     this.isShowingDialog = true;
     const { width, height } = this.cameras.main;
 
-    this.dialogBox = this.add.rectangle(width / 2, height - 100, width - 200, 100, 0x000000, 0.9);
-    this.dialogBox.setStrokeStyle(2, 0x8b0000);
+    this.dialogBox = this.add.rectangle(width / 2, height - 100, width - 200, 120, 0x000000, 0.95);
+    this.dialogBox.setStrokeStyle(3, 0x8b0000);
     this.dialogBox.setDepth(200);
 
     this.dialogText = this.add.text(width / 2, height - 100, message, {
@@ -349,30 +505,47 @@ export default class GameScene extends Phaser.Scene {
 
     this.time.delayedCall(duration, () => {
       if (this.dialogBox) {
-        this.dialogBox.destroy();
-        this.dialogText.destroy();
-        this.dialogBox = null;
-        this.isShowingDialog = false;
+        this.tweens.add({
+          targets: [this.dialogBox, this.dialogText],
+          alpha: 0,
+          duration: 500,
+          onComplete: () => {
+            if (this.dialogBox) {
+              this.dialogBox.destroy();
+              this.dialogText.destroy();
+              this.dialogBox = null;
+              this.isShowingDialog = false;
+            }
+          }
+        });
       }
     });
   }
 
   showScaryEffect() {
-    this.cameras.main.shake(500, 0.01);
+    AudioGenerator.playScarySound();
+    this.cameras.main.shake(600, 0.015);
 
     const { width, height } = this.cameras.main;
-    const ghost = this.add.text(
-      Phaser.Math.Between(100, width - 100),
-      Phaser.Math.Between(100, height - 100),
-      '👻',
-      { fontSize: '64px' }
-    ).setAlpha(0.3).setDepth(100);
+    const ghost = this.add.image(
+      Phaser.Math.Between(200, width - 200),
+      Phaser.Math.Between(200, height - 200),
+      'ghost'
+    ).setAlpha(0).setDepth(100);
 
     this.tweens.add({
       targets: ghost,
-      alpha: 0,
-      duration: 2000,
+      alpha: 0.6,
+      duration: 1000,
+      yoyo: true,
       onComplete: () => ghost.destroy()
+    });
+
+    this.tweens.add({
+      targets: ghost,
+      y: ghost.y + 50,
+      duration: 2000,
+      ease: 'Sine.easeInOut'
     });
   }
 }
